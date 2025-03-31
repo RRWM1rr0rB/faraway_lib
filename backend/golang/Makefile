@@ -1,4 +1,4 @@
-NAMES= errors core tracing logging
+NAMES= errors core tracing logging pprof
 #
 
 .PHONY: tags
