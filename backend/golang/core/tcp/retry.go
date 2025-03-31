@@ -1,0 +1,37 @@
+package tcp
+
+import (
+	"fmt"
+	"time"
+)
+
+func (c *TCPClient) WriteWithRetry(data []byte, maxRetries int, backoff time.Duration) error {
+	var lastErr error
+
+	for i := 0; i < maxRetries; i++ {
+		if err := c.Write(data); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			time.Sleep(backoff)
+			c.Reconnect()
+		}
+	}
+
+	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
+}
+
+func (c *TCPClient) ReadWithRetry(maxRetries int, backoff time.Duration) ([]byte, error) {
+	var lastErr error
+
+	for i := 0; i < maxRetries; i++ {
+		if data, err := c.Read(); err == nil {
+			return data, nil
+		} else {
+			lastErr = err
+			time.Sleep(backoff)
+		}
+	}
+
+	return nil, fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
+}
