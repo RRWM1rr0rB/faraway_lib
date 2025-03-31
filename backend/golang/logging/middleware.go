@@ -8,7 +8,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 
-	"github.com/RRWM1rr0rB/faraway_lib/tracing"
+	"github.com/RRWM1rr0rB/faraway_lib/backend/golang/tracing"
 )
 
 const (
