@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func (c *TCPClient) WriteWithRetry(data []byte, maxRetries int, backoff time.Duration) error {
+func (c *Client) WriteWithRetry(data []byte, maxRetries int, backoff time.Duration) error {
 	var lastErr error
 
 	for i := 0; i < maxRetries; i++ {
@@ -21,7 +21,7 @@ func (c *TCPClient) WriteWithRetry(data []byte, maxRetries int, backoff time.Dur
 	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
-func (c *TCPClient) ReadWithRetry(maxRetries int, backoff time.Duration) ([]byte, error) {
+func (c *Client) ReadWithRetry(maxRetries int, backoff time.Duration) ([]byte, error) {
 	var lastErr error
 
 	for i := 0; i < maxRetries; i++ {

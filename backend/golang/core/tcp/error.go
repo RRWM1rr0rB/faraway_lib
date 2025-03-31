@@ -7,9 +7,8 @@ import (
 )
 
 var (
-	ErrConnectionClosed  = errors.New("connection closed")
-	ErrConnectionTimeout = errors.New("connection timeout")
-	ErrTimeout           = errors.New("operation timeout")
+	ErrConnectionClosed = errors.New("connection closed")
+	ErrTimeout          = errors.New("operation timeout")
 )
 
 type ConnectionError struct {

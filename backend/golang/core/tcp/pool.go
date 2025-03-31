@@ -6,22 +6,22 @@ import (
 )
 
 type ConnectionPool struct {
-	factory func() (*TCPClient, error)
-	pool    chan *TCPClient
+	factory func() (*Client, error)
+	pool    chan *Client
 	maxSize int
 	logger  *log.Logger
 }
 
-func NewConnectionPool(factory func() (*TCPClient, error), maxSize int) *ConnectionPool {
+func NewConnectionPool(factory func() (*Client, error), maxSize int) *ConnectionPool {
 	return &ConnectionPool{
 		factory: factory,
-		pool:    make(chan *TCPClient, maxSize),
+		pool:    make(chan *Client, maxSize),
 		maxSize: maxSize,
 		logger:  log.New(io.Discard, "", 0),
 	}
 }
 
-func (p *ConnectionPool) Get() (*TCPClient, error) {
+func (p *ConnectionPool) Get() (*Client, error) {
 	select {
 	case conn := <-p.pool:
 		return conn, nil
@@ -30,7 +30,7 @@ func (p *ConnectionPool) Get() (*TCPClient, error) {
 	}
 }
 
-func (p *ConnectionPool) Put(conn *TCPClient) {
+func (p *ConnectionPool) Put(conn *Client) {
 	select {
 	case p.pool <- conn:
 		p.logger.Printf("Connection returned to pool")

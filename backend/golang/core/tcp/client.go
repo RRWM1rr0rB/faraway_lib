@@ -14,7 +14,7 @@ type ConnectionStats struct {
 	LastActivity time.Time
 	RetryCount   int
 }
-type TCPClient struct {
+type Client struct {
 	address      string
 	conn         net.Conn
 	readTimeout  time.Duration
@@ -25,7 +25,7 @@ type TCPClient struct {
 	stats        ConnectionStats
 }
 
-func (c *TCPClient) Connect() error {
+func (c *Client) Connect() error {
 	var conn net.Conn
 	var err error
 
@@ -47,7 +47,7 @@ func (c *TCPClient) Connect() error {
 	return nil
 }
 
-func (c *TCPClient) Read() ([]byte, error) {
+func (c *Client) Read() ([]byte, error) {
 	if c.conn == nil {
 		return nil, &ConnectionError{Op: "read", Err: ErrConnectionClosed}
 	}
@@ -68,7 +68,7 @@ func (c *TCPClient) Read() ([]byte, error) {
 	return buf[:n], nil
 }
 
-func (c *TCPClient) Write(data []byte) error {
+func (c *Client) Write(data []byte) error {
 	if c.conn == nil {
 		return &ConnectionError{Op: "write", Err: ErrConnectionClosed}
 	}
@@ -88,7 +88,7 @@ func (c *TCPClient) Write(data []byte) error {
 	return nil
 }
 
-func (c *TCPClient) Close() error {
+func (c *Client) Close() error {
 	if c.conn == nil {
 		return nil
 	}
@@ -103,19 +103,18 @@ func (c *TCPClient) Close() error {
 	return nil
 }
 
-// Дополнительные методы
-func (c *TCPClient) Reconnect() error {
+func (c *Client) Reconnect() error {
 	c.Close()
 	return c.Connect()
 }
 
-func (c *TCPClient) RemoteAddr() net.Addr {
+func (c *Client) RemoteAddr() net.Addr {
 	if c.conn != nil {
 		return c.conn.RemoteAddr()
 	}
 	return nil
 }
 
-func (c *TCPClient) Stats() ConnectionStats {
+func (c *Client) Stats() ConnectionStats {
 	return c.stats
 }

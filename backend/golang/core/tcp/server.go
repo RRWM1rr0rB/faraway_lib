@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-type TCPServer struct {
+type Server struct {
 	address      string
 	listener     net.Listener
 	handler      func(net.Conn)
@@ -18,7 +18,7 @@ type TCPServer struct {
 	shutdownChan chan struct{}
 }
 
-func (s *TCPServer) Start() error {
+func (s *Server) Start() error {
 	listener, err := net.Listen("tcp", s.address)
 	if err != nil {
 		return wrapError("start server", err, false)
@@ -36,7 +36,7 @@ func (s *TCPServer) Start() error {
 	return nil
 }
 
-func (s *TCPServer) acceptConnections() {
+func (s *Server) acceptConnections() {
 	for {
 		select {
 		case <-s.shutdownChan:
@@ -54,13 +54,13 @@ func (s *TCPServer) acceptConnections() {
 	}
 }
 
-func (s *TCPServer) handleConnection(conn net.Conn) {
+func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(s.idleTimeout))
 	s.handler(conn)
 }
 
-func (s *TCPServer) Stop() error {
+func (s *Server) Stop() error {
 	close(s.shutdownChan)
 	if err := s.listener.Close(); err != nil {
 		return wrapError("stop server", err, false)
@@ -69,7 +69,7 @@ func (s *TCPServer) Stop() error {
 	return nil
 }
 
-func (s *TCPServer) StopWithTimeout(timeout time.Duration) error {
+func (s *Server) StopWithTimeout(timeout time.Duration) error {
 	deadline := time.After(timeout)
 	done := make(chan error)
 
