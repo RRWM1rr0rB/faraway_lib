@@ -1,4 +1,4 @@
-module github.com/RRWM1rr0rB/faraway_lib/tracing
+module github.com/RRWM1rr0rB/faraway_lib/backend/golang/tracing
 
 go 1.24.1
 
