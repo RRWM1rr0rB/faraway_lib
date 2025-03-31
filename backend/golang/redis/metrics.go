@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"trade/app/pkg/metrics"
+	"github.com/RRWM1rr0rB/faraway_lib/backend/golang/metrics"
 )
 
 const (
