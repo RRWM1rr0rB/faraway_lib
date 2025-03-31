@@ -1,4 +1,4 @@
-NAMES= errors
+NAMES= errors core tracing
 #
 
 .PHONY: tags
