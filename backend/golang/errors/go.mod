@@ -1,4 +1,4 @@
-module github.com/RRWM1rr0rB/faraway_lib/errors
+module github.com/RRWM1rr0rB/faraway_lib/backend/golang/errors
 
 go 1.24.1
 
