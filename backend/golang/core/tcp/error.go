@@ -36,7 +36,7 @@ func wrapError(op string, err error, retryable bool) error {
 func isNetworkErrorRetryable(err error) bool {
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return netErr.Timeout() || netErr.Temporary()
+		return netErr.Timeout()
 	}
 	return false
 }

@@ -35,9 +35,8 @@ func (p *ConnectionPool) Put(conn *Client) {
 	case p.pool <- conn:
 		p.logger.Printf("Connection returned to pool")
 	default:
-		err := conn.Close()
-		if err != nil {
-			log.Fatal(err)
+		if err := conn.Close(); err != nil {
+			p.logger.Printf("Error closing connection: %v", err)
 		}
 		p.logger.Printf("Connection pool full, connection closed")
 	}

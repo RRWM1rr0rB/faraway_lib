@@ -8,20 +8,19 @@ import (
 )
 
 const (
-	defaultRateLimitPerIP    = 10             // максимальное количество соединений в секунду с одного IP
-	defaultInitialDifficulty = 4              // начальная сложность PoW (количество нулей)
-	maxDifficulty            = 8              // максимальная сложность PoW
-	banDuration              = 24 * time.Hour // длительность бана
+	defaultRateLimitPerIP    = 10             // Max connection per sec.
+	defaultInitialDifficulty = 4              // Star difficulty PoW(0000).
+	maxDifficulty            = 8              // Max Difficulty PoW.
+	banDuration              = 24 * time.Hour // Ban Duration.
 )
 
-// RateLimiter представляет собой структуру для отслеживания соединений
 type RateLimiter struct {
 	mu sync.RWMutex
-	// IP -> количество соединений в текущей секунде
+	// IP -> amount connection in this is second.
 	connectionsPerIP map[string]*rateCounter
-	// IP -> время окончания бана
+	// IP -> ban end time.
 	bannedIPs map[string]time.Time
-	// IP -> текущая сложность PoW
+	// IP -> currently difficulty PoW.
 	difficulties map[string]int32
 	logger       *log.Logger
 }
@@ -31,7 +30,7 @@ type rateCounter struct {
 	timestamp time.Time
 }
 
-// NewRateLimiter создает новый RateLimiter
+// NewRateLimiter create new RateLimiter.
 func NewRateLimiter(logger *log.Logger) *RateLimiter {
 	if logger == nil {
 		logger = log.Default()
@@ -44,86 +43,105 @@ func NewRateLimiter(logger *log.Logger) *RateLimiter {
 	}
 }
 
-// RateLimitMiddleware создает middleware для ограничения соединений
+// RateLimitMiddleware creates a middleware for limiting connections
+//
+// This middleware checks if the client's IP is banned, and if the rate limit
+// for the IP is exceeded. If the rate limit is exceeded, the client is sent a
+// PoW challenge with increasing difficulty.
 func RateLimitMiddleware(limiter *RateLimiter) func(net.Conn) {
 	return func(conn net.Conn) {
 		ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
 
-		// Проверяем, не забанен ли IP
+		// Check if the IP is banned
 		if limiter.isBanned(ip) {
 			limiter.logger.Printf("IP %s is banned", ip)
-			conn.Close()
+			err := conn.Close()
+			if err != nil {
+				log.Printf("failed to close connection: %v", err)
+			}
 			return
 		}
 
-		// Проверяем количество соединений
+		// Check if the rate limit is exceeded
 		if !limiter.allowConnection(ip) {
 			limiter.logger.Printf("Rate limit exceeded for IP %s", ip)
-			// Увеличиваем сложность PoW
+			// Increase the difficulty of the PoW challenge
 			limiter.increaseDifficulty(ip)
-			conn.Close()
+			err := conn.Close()
+			if err != nil {
+				log.Printf("failed to close connection: %v", err)
+			}
 			return
 		}
 
-		// Получаем текущую сложность для IP
+		// Get the current difficulty for the IP
 		difficulty := limiter.getDifficulty(ip)
 
-		// Генерируем PoW-задачу
+		// Generate a PoW challenge
 		challenge, err := GeneratePoWChallenge(difficulty)
 		if err != nil {
 			limiter.logger.Printf("Failed to generate PoW challenge: %v", err)
-			conn.Close()
+			connErr := conn.Close()
+			if connErr != nil {
+				log.Printf("failed to close connection: %v", connErr)
+			}
 			return
 		}
 
-		// Отправляем задачу клиенту
-		if err := WritePoWChallenge(conn, challenge); err != nil {
-			limiter.logger.Printf("Failed to write PoW challenge: %v", err)
-			conn.Close()
+		// Send the challenge to the client
+		if writePoWChallengeErr := WritePoWChallenge(conn, challenge); writePoWChallengeErr != nil {
+			limiter.logger.Printf("Failed to write PoW challenge: %v", writePoWChallengeErr)
+			connErr := conn.Close()
+			if connErr != nil {
+				log.Printf("failed to close connection: %v", connErr)
+			}
 			return
 		}
 
-		// Читаем решение от клиента
-		solution, err := ReadPoWSolution(conn)
-		if err != nil {
+		// Read the solution from the client
+		solution, solutionErr := ReadPoWSolution(conn)
+		if solutionErr != nil {
 			limiter.logger.Printf("Failed to read PoW solution: %v", err)
-			conn.Close()
+			connErr := conn.Close()
+			if connErr != nil {
+				log.Printf("failed to close connection: %v", connErr)
+			}
 			return
 		}
 
-		// Проверяем решение
+		// Validate the solution
 		if !ValidatePoWSolution(challenge, solution) {
 			limiter.logger.Printf("Invalid PoW solution from IP %s", ip)
 			limiter.increaseDifficulty(ip)
-			conn.Close()
+			connErr := conn.Close()
+			if connErr != nil {
+				log.Printf("failed to close connection: %v", connErr)
+			}
 			return
 		}
 
-		// Если решение валидно, уменьшаем сложность
+		// If the solution is valid, decrease the difficulty
 		limiter.decreaseDifficulty(ip)
 		limiter.logger.Printf("Valid PoW solution from IP %s, difficulty: %d", ip, difficulty)
 	}
 }
 
-// isBanned проверяет, забанен ли IP
 func (r *RateLimiter) isBanned(ip string) bool {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	banTime, exists := r.bannedIPs[ip]
 	if !exists {
+		r.mu.RUnlock()
 		return false
 	}
 
 	if time.Now().After(banTime) {
-		// Удаляем истекший бан
 		r.mu.RUnlock()
 		r.mu.Lock()
 		delete(r.bannedIPs, ip)
 		r.mu.Unlock()
 		return false
 	}
-
+	r.mu.RUnlock()
 	return true
 }
 

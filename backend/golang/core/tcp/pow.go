@@ -23,7 +23,12 @@ type PoWSolution struct {
 
 // GeneratePoWChallenge создает новую PoW-задачу
 func GeneratePoWChallenge(difficulty int32) (*PoWChallenge, error) {
+	if difficulty < 0 || difficulty > 256 {
+		return nil, fmt.Errorf("invalid difficulty")
+	}
+
 	randomBytes := make([]byte, 32)
+
 	if _, err := cryptorand.Read(randomBytes); err != nil {
 		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
 	}
@@ -37,6 +42,9 @@ func GeneratePoWChallenge(difficulty int32) (*PoWChallenge, error) {
 
 // ValidatePoWSolution проверяет решение PoW-задачи
 func ValidatePoWSolution(challenge *PoWChallenge, solution *PoWSolution) bool {
+	if time.Now().Unix()-challenge.Timestamp > 60 {
+		return false
+	}
 	// Создаем буфер для хеширования
 	buf := make([]byte, 8+32+8)
 	binary.BigEndian.PutUint64(buf[0:8], uint64(challenge.Timestamp))
