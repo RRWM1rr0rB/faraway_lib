@@ -1,4 +1,4 @@
-NAMES= errors core tracing logging pprof metrics redis
+NAMES= errors core tracing logging pprof
 #
 
 .PHONY: tags
