@@ -211,7 +211,7 @@ type loggingHook struct{}
 func (h *loggingHook) DialHook(next redis.DialHook) redis.DialHook {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		log.Printf("Connecting to %s://%s", network, addr)
-		return next(ctx, network, addr)
+		return next(ctx, network, addr), nil
 	}
 }
 

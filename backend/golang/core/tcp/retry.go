@@ -14,7 +14,10 @@ func (c *Client) WriteWithRetry(data []byte, maxRetries int, backoff time.Durati
 		} else {
 			lastErr = err
 			time.Sleep(backoff)
-			c.Reconnect()
+			reconnectErr := c.Reconnect()
+			if reconnectErr != nil {
+				return reconnectErr
+			}
 		}
 	}
 
