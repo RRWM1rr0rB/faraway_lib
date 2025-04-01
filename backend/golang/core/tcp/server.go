@@ -65,7 +65,7 @@ func NewServer(
 		logger:      log.Default(),
 		ctx:         ctx,
 		cancel:      cancel,
-		maxConns:    1000, // default max connections
+		maxConns:    65101, // default max connections
 		stats: ServerStats{
 			LastActivity: time.Now(),
 		},
@@ -87,7 +87,7 @@ func (s *Server) Start() error {
 		return errors.New("server already started")
 	}
 
-	listener, err := net.Listen("tcp", s.address)
+	listener, err := net.Listen(TCP, s.address)
 	if err != nil {
 		return wrapError("start server", err, false)
 	}

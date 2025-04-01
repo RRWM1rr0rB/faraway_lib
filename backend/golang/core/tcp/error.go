@@ -6,6 +6,12 @@ import (
 	"net"
 )
 
+const (
+	TCP   = "tcp"
+	Read  = "read"
+	Write = "write"
+)
+
 var (
 	ErrConnectionClosed = errors.New("connection closed")
 	ErrTimeout          = errors.New("operation timeout")

@@ -85,9 +85,9 @@ func (c *Client) Connect() error {
 	var err error
 
 	if c.tlsConfig != nil {
-		conn, err = tls.Dial("tcp", c.address, c.tlsConfig)
+		conn, err = tls.Dial(TCP, c.address, c.tlsConfig)
 	} else {
-		conn, err = net.Dial("tcp", c.address)
+		conn, err = net.Dial(TCP, c.address)
 	}
 
 	if err != nil {
@@ -105,13 +105,13 @@ func (c *Client) Read() ([]byte, error) {
 	c.mu.RLock()
 	if c.conn == nil {
 		c.mu.RUnlock()
-		return nil, &ConnectionError{Op: "read", Err: ErrConnectionClosed}
+		return nil, &ConnectionError{Op: Read, Err: ErrConnectionClosed}
 	}
 	c.mu.RUnlock()
 
 	select {
 	case <-c.ctx.Done():
-		return nil, &ConnectionError{Op: "read", Err: c.ctx.Err()}
+		return nil, &ConnectionError{Op: Read, Err: c.ctx.Err()}
 	default:
 		if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
 			return nil, wrapError("set read deadline", err, false)
@@ -123,7 +123,7 @@ func (c *Client) Read() ([]byte, error) {
 		buf := make([]byte, c.bufferSize)
 		n, err := c.conn.Read(buf)
 		if err != nil {
-			return nil, wrapError("read", err, isNetworkErrorRetryable(err))
+			return nil, wrapError(Read, err, isNetworkErrorRetryable(err))
 		}
 
 		c.mu.Lock()
@@ -139,13 +139,13 @@ func (c *Client) Write(data []byte) error {
 	c.mu.RLock()
 	if c.conn == nil {
 		c.mu.RUnlock()
-		return &ConnectionError{Op: "write", Err: ErrConnectionClosed}
+		return &ConnectionError{Op: Write, Err: ErrConnectionClosed}
 	}
 	c.mu.RUnlock()
 
 	select {
 	case <-c.ctx.Done():
-		return &ConnectionError{Op: "write", Err: c.ctx.Err()}
+		return &ConnectionError{Op: Write, Err: c.ctx.Err()}
 	default:
 		if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 			return wrapError("set write deadline", err, false)
@@ -156,7 +156,7 @@ func (c *Client) Write(data []byte) error {
 
 		n, err := c.conn.Write(data)
 		if err != nil {
-			return wrapError("write", err, isNetworkErrorRetryable(err))
+			return wrapError(Write, err, isNetworkErrorRetryable(err))
 		}
 
 		c.mu.Lock()
