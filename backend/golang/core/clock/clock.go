@@ -23,8 +23,6 @@ func (c *realClock) After(d time.Duration) (<-chan time.Time, error) {
 	return time.After(d), nil
 }
 
-func (c *realClock) NewTimer(d time.Duration)
-
 // Now implements Clock interface for realClock.
 func (c *realClock) Now() time.Time {
 	return time.Now()
