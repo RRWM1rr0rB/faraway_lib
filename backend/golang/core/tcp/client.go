@@ -90,7 +90,7 @@ func (c *Client) Connect() error {
 	}
 	c.mu.RUnlock()
 
-	// --- Dialing without holding the main lock ---
+	// --- Dialing without holding the lock ---
 	var conn net.Conn
 	var err error
 	dialer := net.Dialer{Timeout: c.writeTimeout} // Use writeTimeout as connect timeout, or add a specific connect timeout option
