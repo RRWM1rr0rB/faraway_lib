@@ -1,6 +1,6 @@
 module github.com/RRWM1rr0rB/faraway_lib/backend/golang/core
 
-go 1.24.1
+go 1.24.2
 
 require (
 	github.com/google/uuid v1.6.0
