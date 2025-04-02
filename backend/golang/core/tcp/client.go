@@ -13,8 +13,8 @@ import (
 
 const (
 	defaultBufferSize   = 1024
-	defaultReadTimeout  = 3 * time.Second
-	defaultWriteTimeout = 3 * time.Second
+	defaultReadTimeout  = 4 * time.Second
+	defaultWriteTimeout = 4 * time.Second
 )
 
 // ConnectionStats represents statistics about the connection
