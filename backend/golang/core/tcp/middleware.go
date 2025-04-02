@@ -1,5 +1,5 @@
 // tcp/ratelimiter.go
-package main
+package tcp
 
 import (
 	"context"
