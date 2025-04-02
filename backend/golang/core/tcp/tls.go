@@ -1,10 +1,10 @@
-package tcp
+package main
 
 import (
 	"crypto/tls"
 )
 
-// ServerTLSConfig создает TLS конфигурацию для сервера
+// ServerTLSConfig creates a TLS configuration for the server
 func ServerTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -17,7 +17,7 @@ func ServerTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 	}, nil
 }
 
-// ClientTLSConfig создает базовую TLS конфигурацию для клиента
+// ClientTLSConfig creates a basic TLS configuration for the client
 func ClientTLSConfig(insecureSkipVerify bool) *tls.Config {
 	return &tls.Config{
 		InsecureSkipVerify: insecureSkipVerify,

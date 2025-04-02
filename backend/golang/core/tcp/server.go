@@ -1,4 +1,4 @@
-package tcp
+package main
 
 import (
 	"context"
@@ -110,6 +110,12 @@ func (s *Server) acceptConnections() {
 	for {
 		select {
 		case <-s.ctx.Done():
+			// Server is stopping
+			if s.listener != nil {
+				if err := s.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					s.logger.Printf("Error closing listener: %v", err)
+				}
+			}
 			return
 		default:
 			conn, err := s.listener.Accept()
@@ -117,7 +123,14 @@ func (s *Server) acceptConnections() {
 				if !errors.Is(err, net.ErrClosed) {
 					s.logger.Printf("Accept error: %v", err)
 				}
-				return
+				// If the server context is cancelled, listener might be closed, so we return.
+				select {
+				case <-s.ctx.Done():
+					return
+				default:
+					// Continue accepting if it's a temporary error.
+					continue
+				}
 			}
 
 			if atomic.LoadInt64(&s.currentConns) >= s.maxConns {
@@ -138,14 +151,18 @@ func (s *Server) acceptConnections() {
 
 // handleConnection handles a single client connection
 func (s *Server) handleConnection(conn net.Conn) {
+	addr := conn.RemoteAddr()
+	s.logger.Printf("Connection from %s (%s)", addr, addr.Network())
+
 	defer func() {
 		atomic.AddInt64(&s.currentConns, -1)
 		atomic.AddInt64(&s.stats.ActiveConnections, -1)
-		s.wg.Done()
 		// Ensure connection is closed on exit, check error
 		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			s.logger.Printf("Error closing connection in defer: %v", err)
+			s.logger.Printf("Error closing connection from %s in defer: %v", addr, err)
 		}
+		s.wg.Done()
+		s.logger.Printf("Connection closed: %s", addr) // Log connection closure
 	}()
 
 	if err := conn.SetDeadline(time.Now().Add(s.idleTimeout)); err != nil {
@@ -153,6 +170,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
+	// Apply the middleware before handling the connection
 	ApplyMiddleware(conn, s.middleware, func(passedConn net.Conn) {
 		// If middleware passed, run the original handler
 		// Ensure the handler also manages deadlines if necessary
@@ -169,11 +187,14 @@ func (s *Server) Stop() error {
 		return errors.New("server not started")
 	}
 
-	s.cancel()
+	s.cancel() // Signal goroutines to stop
+
+	// Close the listener to stop accepting new connections
 	if err := s.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		return wrapError("stop server", err, false)
 	}
 
+	// Wait for all active connections to close
 	s.wg.Wait()
 	s.logger.Printf("Server stopped")
 	return nil

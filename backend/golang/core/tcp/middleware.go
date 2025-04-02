@@ -1,4 +1,5 @@
-package tcp
+// tcp/ratelimiter.go
+package main
 
 import (
 	"context"
@@ -227,8 +228,8 @@ func (r *RateLimiter) checkAndUpdateRate(ip string) (bool, bool) {
 			count:     1,
 			timestamp: now,
 		}
-		// Reset difficulty if it was previously high? Optional.
-		// delete(r.difficulties, ip)
+		// Reset difficulty if it was previously high. Optional.
+		delete(r.difficulties, ip)
 		return true, false // Allow, don't ban
 	}
 
@@ -248,7 +249,8 @@ func (r *RateLimiter) checkAndUpdateRate(ip string) (bool, bool) {
 	return true, false // Allow, don't ban
 }
 
-// increaseDifficulty increases PoW difficulty for an IP. MUST be called with lock held or ensure thread safety.
+// increaseDifficulty increases PoW difficulty for an IP.
+// MUST be called with lock held or ensure thread safety.
 func (r *RateLimiter) increaseDifficulty(ip string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -260,7 +262,8 @@ func (r *RateLimiter) increaseDifficulty(ip string) {
 	}
 }
 
-// decreaseDifficulty decreases PoW difficulty for an IP. MUST be called with lock held or ensure thread safety.
+// decreaseDifficulty decreases PoW difficulty for an IP.
+// MUST be called with lock held or ensure thread safety.
 func (r *RateLimiter) decreaseDifficulty(ip string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -1,4 +1,4 @@
-package tcp
+package main
 
 import (
 	"context"
@@ -22,7 +22,7 @@ type ConnectionStats struct {
 	BytesRead    uint64
 	BytesWritten uint64
 	LastActivity time.Time
-	RetryCount   int // Note: RetryCount is declared but not used in the provided code. Consider incrementing it in retry logic.
+	RetryCount   int // Number of retries attempted for read/write operations
 }
 
 // Client represents a TCP client with connection management and statistics
@@ -275,7 +275,7 @@ func (c *Client) Close() error {
 
 	if conn == nil {
 		c.logger.Printf("Close called but connection was already nil")
-		return nil // Or return ErrConnectionClosed? Nil seems more idempotent.
+		return nil // Nil seems more idempotent.
 	}
 
 	err := conn.Close()
@@ -309,7 +309,8 @@ func (c *Client) Reconnect() error {
 	c.mu.Unlock()
 	// --- End new context creation ---
 
-	// Attempt to connect using the new context. Connect() handles locking internally.
+	// Attempt to connect using the new context.
+	// Connect() handles locking internally.
 	err := c.Connect()
 	if err != nil {
 		// If connect fails, cancel the context we just created

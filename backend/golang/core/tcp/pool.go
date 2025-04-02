@@ -1,4 +1,4 @@
-package tcp
+package main
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// ConnectionPool manages a pool of TCP client connections.
 type ConnectionPool struct {
 	factory func() (*Client, error)
 	pool    chan *Client
@@ -17,6 +18,7 @@ type ConnectionPool struct {
 	pingTimeout time.Duration
 }
 
+// NewConnectionPool creates a new connection pool.
 func NewConnectionPool(factory func() (*Client, error), maxSize int) *ConnectionPool {
 	// Consider adding options, e.g., for pingTimeout
 	pingTimeout := 1 * time.Second // Default ping timeout
@@ -67,6 +69,7 @@ func (p *ConnectionPool) ping(conn *Client) bool {
 	return true
 }
 
+// Get retrieves a connection from the pool. If the pool is empty, it creates a new one.
 func (p *ConnectionPool) Get() (*Client, error) {
 	select {
 	case conn := <-p.pool:
@@ -86,6 +89,7 @@ func (p *ConnectionPool) Get() (*Client, error) {
 	}
 }
 
+// Put returns a connection to the pool if there is space. Otherwise, it closes the connection.
 func (p *ConnectionPool) Put(conn *Client) {
 	if conn == nil {
 		return

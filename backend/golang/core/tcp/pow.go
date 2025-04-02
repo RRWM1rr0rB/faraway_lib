@@ -1,4 +1,4 @@
-package tcp
+package main
 
 import (
 	cryptorand "crypto/rand"
@@ -21,6 +21,10 @@ type PoWSolution struct {
 	Nonce uint64
 }
 
+type WisdomDTO struct {
+	Quote string `json:"quote"`
+}
+
 // GeneratePoWChallenge create new PoW-task.
 func GeneratePoWChallenge(difficulty int32) (*PoWChallenge, error) {
 	if difficulty < 0 || difficulty > 256 {
@@ -33,9 +37,15 @@ func GeneratePoWChallenge(difficulty int32) (*PoWChallenge, error) {
 		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 
+	buf := make([]byte, 8+len(randomBytes)) // Временная метка + случайные байты
+	binary.BigEndian.PutUint64(buf[0:8], uint64(time.Now().Unix()))
+	copy(buf[8:], randomBytes)
+
+	hash := sha256.Sum256(buf)
+
 	return &PoWChallenge{
 		Timestamp:   time.Now().Unix(),
-		RandomBytes: randomBytes,
+		RandomBytes: hash[:],
 		Difficulty:  difficulty,
 	}, nil
 }
@@ -113,7 +123,7 @@ func ReadPoWChallenge(r io.Reader) (*PoWChallenge, error) {
 		return nil, fmt.Errorf("failed to read random bytes: %w", err)
 	}
 
-	// Читаем difficulty (4 byte)
+	// Читаем difficulty (4 byte) - Fixed comment to English
 	if err := binary.Read(r, binary.BigEndian, &challenge.Difficulty); err != nil {
 		return nil, fmt.Errorf("failed to read difficulty: %w", err)
 	}
@@ -122,8 +132,8 @@ func ReadPoWChallenge(r io.Reader) (*PoWChallenge, error) {
 }
 
 // WritePoWSolution write solution PoW-task to writer.
-func WritePoWSolution(w io.Writer, solution *PoWSolution) error {
-	return binary.Write(w, binary.BigEndian, solution.Nonce)
+func WritePoWSolution(w io.Writer, solution *WisdomDTO) error {
+	return binary.Write(w, binary.BigEndian, solution.Quote)
 }
 
 // ReadPoWSolution read solution PoW-task from reader.

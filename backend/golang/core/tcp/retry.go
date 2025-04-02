@@ -1,4 +1,4 @@
-package tcp
+package main
 
 import (
 	"errors"
@@ -22,11 +22,17 @@ func (c *Client) WriteWithRetry(data []byte, maxRetries int, backoff time.Durati
 
 		err := c.Write(data)
 		if err == nil {
+			c.mu.Lock()
+			c.stats.RetryCount = 0 // Reset retry count on success
+			c.mu.Unlock()
 			return nil // Success
 		}
 
 		lastErr = err
 		c.logger.Printf("Write attempt %d/%d failed: %v. Retrying in %v...", i+1, maxRetries, err, backoff)
+		c.mu.Lock()
+		c.stats.RetryCount++ // Increment retry count on failure
+		c.mu.Unlock()
 
 		// Check context cancellation before sleeping
 		select {
@@ -73,11 +79,17 @@ func (c *Client) ReadWithRetry(maxRetries int, backoff time.Duration) ([]byte, e
 
 		data, err := c.Read()
 		if err == nil {
+			c.mu.Lock()
+			c.stats.RetryCount = 0 // Reset retry count on success
+			c.mu.Unlock()
 			return data, nil // Success
 		}
 
 		lastErr = err
 		c.logger.Printf("Read attempt %d/%d failed: %v. Retrying in %v...", i+1, maxRetries, err, backoff)
+		c.mu.Lock()
+		c.stats.RetryCount++ // Increment retry count on failure
+		c.mu.Unlock()
 
 		// Check if the error suggests a broken connection that might be fixed by reconnecting
 		isBrokenPipe := false
