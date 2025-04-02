@@ -1,7 +1,9 @@
 package tcp
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
