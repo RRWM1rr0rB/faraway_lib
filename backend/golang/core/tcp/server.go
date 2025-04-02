@@ -39,6 +39,7 @@ type Server struct {
 	wg           sync.WaitGroup
 	maxConns     int64
 	currentConns int64
+	middleware   func(net.Conn) bool
 }
 
 // NewServer creates a new TCP server with the given configuration
@@ -141,11 +142,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 		atomic.AddInt64(&s.currentConns, -1)
 		atomic.AddInt64(&s.stats.ActiveConnections, -1)
 		s.wg.Done()
-	}()
-
-	defer func() {
+		// Ensure connection is closed on exit, check error
 		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			s.logger.Printf("Close error: %v", err)
+			s.logger.Printf("Error closing connection in defer: %v", err)
 		}
 	}()
 
@@ -154,7 +153,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	s.handler(conn)
+	ApplyMiddleware(conn, s.middleware, func(passedConn net.Conn) {
+		// If middleware passed, run the original handler
+		// Ensure the handler also manages deadlines if necessary
+		s.handler(passedConn)
+	})
 }
 
 // Stop gracefully stops the server

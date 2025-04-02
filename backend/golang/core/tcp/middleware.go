@@ -1,6 +1,9 @@
 package tcp
 
 import (
+	"context"
+	"errors"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -8,10 +11,11 @@ import (
 )
 
 const (
-	defaultRateLimitPerIP    = 10             // Max connection per sec.
-	defaultInitialDifficulty = 4              // Star difficulty PoW(0000).
-	maxDifficulty            = 8              // Max Difficulty PoW.
-	banDuration              = 24 * time.Hour // Ban Duration.
+	defaultRateLimitPerIP    = 10              // Max connection per sec.
+	defaultInitialDifficulty = 4               // Start difficulty PoW(0000).
+	maxDifficulty            = 8               // Max Difficulty PoW.
+	banDuration              = 1 * time.Minute // Ban Duration (reduced for testing/demo).
+	cleanupInterval          = 5 * time.Minute // Interval for cleaning up old entries.
 )
 
 type RateLimiter struct {
@@ -23,6 +27,10 @@ type RateLimiter struct {
 	// IP -> currently difficulty PoW.
 	difficulties map[string]int32
 	logger       *log.Logger
+
+	// For background cleanup
+	stopCh chan struct{}
+	wg     sync.WaitGroup
 }
 
 type rateCounter struct {
@@ -30,210 +38,301 @@ type rateCounter struct {
 	timestamp time.Time
 }
 
-// NewRateLimiter create new RateLimiter.
+// NewRateLimiter create new RateLimiter and starts background cleanup.
 func NewRateLimiter(logger *log.Logger) *RateLimiter {
 	if logger == nil {
-		logger = log.Default()
+		logger = log.New(io.Discard, "[RateLimiter] ", log.LstdFlags) // Use io.Discard or provide a default logger
 	}
-	return &RateLimiter{
+	rl := &RateLimiter{
 		connectionsPerIP: make(map[string]*rateCounter),
 		bannedIPs:        make(map[string]time.Time),
 		difficulties:     make(map[string]int32),
 		logger:           logger,
+		stopCh:           make(chan struct{}),
+	}
+
+	rl.wg.Add(1)
+	go rl.cleanupLoop()
+
+	return rl
+}
+
+// Stop stops the background cleanup goroutine.
+func (r *RateLimiter) Stop() {
+	close(r.stopCh)
+	r.wg.Wait()
+	r.logger.Println("Cleanup routine stopped.")
+}
+
+func (r *RateLimiter) cleanupLoop() {
+	defer r.wg.Done()
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+
+	r.logger.Printf("Starting cleanup routine with interval %v", cleanupInterval)
+	for {
+		select {
+		case <-ticker.C:
+			r.logger.Println("Running periodic cleanup...")
+			r.Cleanup()
+		case <-r.stopCh:
+			r.logger.Println("Stopping cleanup routine...")
+			return
+		}
 	}
 }
 
 // RateLimitMiddleware creates a middleware for limiting connections
-//
-// This middleware checks if the client's IP is banned, and if the rate limit
-// for the IP is exceeded. If the rate limit is exceeded, the client is sent a
-// PoW challenge with increasing difficulty.
-func RateLimitMiddleware(limiter *RateLimiter) func(net.Conn) {
-	return func(conn net.Conn) {
-		ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+// This middleware checks bans, rate limits, and performs PoW challenges.
+// It CLOSES the connection if any check fails.
+func RateLimitMiddleware(limiter *RateLimiter) func(conn net.Conn) bool {
+	return func(conn net.Conn) bool { // Return bool indicating if connection should proceed
+		addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			limiter.logger.Printf("Could not get TCP address from connection")
+			conn.Close() // Close invalid connection type
+			return false
+		}
+		ip := addr.IP.String()
 
-		// Check if the IP is banned
+		// 1. Check if the IP is currently banned
 		if limiter.isBanned(ip) {
-			limiter.logger.Printf("IP %s is banned", ip)
-			err := conn.Close()
-			if err != nil {
-				log.Printf("failed to close connection: %v", err)
-			}
-			return
+			limiter.logger.Printf("IP %s rejected: currently banned", ip)
+			conn.Close()
+			return false
 		}
 
-		// Check if the rate limit is exceeded
-		if !limiter.allowConnection(ip) {
-			limiter.logger.Printf("Rate limit exceeded for IP %s", ip)
-			// Increase the difficulty of the PoW challenge
+		// 2. Check rate limit and potentially ban
+		proceed, ban := limiter.checkAndUpdateRate(ip)
+		if ban {
+			limiter.logger.Printf("IP %s banned due to exceeding rate limit", ip)
+			conn.Close()
+			return false
+		}
+		if !proceed {
+			// Rate limit exceeded, but not banned yet (e.g., requires PoW)
+			limiter.logger.Printf("Rate limit exceeded for IP %s, requiring PoW", ip)
+
+			// --- PoW Challenge ---
+			// Increase difficulty *before* sending challenge
 			limiter.increaseDifficulty(ip)
-			err := conn.Close()
+			difficulty := limiter.getDifficulty(ip) // Get potentially increased difficulty
+
+			challenge, err := GeneratePoWChallenge(difficulty)
 			if err != nil {
-				log.Printf("failed to close connection: %v", err)
+				limiter.logger.Printf("IP %s: Failed to generate PoW challenge: %v", ip, err)
+				conn.Close()
+				return false
 			}
-			return
+
+			// Send the challenge
+			// Add a deadline for writing the challenge
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second)) // Example deadline
+			if writeErr := WritePoWChallenge(conn, challenge); writeErr != nil {
+				limiter.logger.Printf("IP %s: Failed to write PoW challenge: %v", ip, writeErr)
+				conn.Close()
+				conn.SetWriteDeadline(time.Time{}) // Clear deadline
+				return false
+			}
+			conn.SetWriteDeadline(time.Time{}) // Clear deadline
+
+			// Read the solution
+			// Add a deadline for reading the solution
+			conn.SetReadDeadline(time.Now().Add(10 * time.Second)) // Example deadline
+			solution, solutionErr := ReadPoWSolution(conn)
+			if solutionErr != nil {
+				// Differentiate between timeout and other errors
+				if errors.Is(solutionErr, context.DeadlineExceeded) || (solutionErr != nil && solutionErr.Error() == "failed to read nonce: EOF") { // Check specific errors
+					limiter.logger.Printf("IP %s: Did not receive PoW solution in time or connection closed", ip)
+				} else {
+					limiter.logger.Printf("IP %s: Failed to read PoW solution: %v", ip, solutionErr)
+				}
+				conn.Close()
+				conn.SetReadDeadline(time.Time{}) // Clear deadline
+				return false
+			}
+			conn.SetReadDeadline(time.Time{}) // Clear deadline
+
+			// Validate the solution
+			if !ValidatePoWSolution(challenge, solution) {
+				limiter.logger.Printf("IP %s: Invalid PoW solution received", ip)
+				// Difficulty was already increased
+				conn.Close()
+				return false
+			}
+
+			// If the solution is valid, decrease the difficulty slightly (optional, could just keep it high)
+			// limiter.decreaseDifficulty(ip) // Optional: give benefit for solving hard puzzle
+			limiter.logger.Printf("IP %s: Valid PoW solution received (difficulty %d)", ip, difficulty)
+			// PoW passed, allow connection to proceed
+			return true
+
 		}
 
-		// Get the current difficulty for the IP
-		difficulty := limiter.getDifficulty(ip)
-
-		// Generate a PoW challenge
-		challenge, err := GeneratePoWChallenge(difficulty)
-		if err != nil {
-			limiter.logger.Printf("Failed to generate PoW challenge: %v", err)
-			connErr := conn.Close()
-			if connErr != nil {
-				log.Printf("failed to close connection: %v", connErr)
-			}
-			return
-		}
-
-		// Send the challenge to the client
-		if writePoWChallengeErr := WritePoWChallenge(conn, challenge); writePoWChallengeErr != nil {
-			limiter.logger.Printf("Failed to write PoW challenge: %v", writePoWChallengeErr)
-			connErr := conn.Close()
-			if connErr != nil {
-				log.Printf("failed to close connection: %v", connErr)
-			}
-			return
-		}
-
-		// Read the solution from the client
-		solution, solutionErr := ReadPoWSolution(conn)
-		if solutionErr != nil {
-			limiter.logger.Printf("Failed to read PoW solution: %v", err)
-			connErr := conn.Close()
-			if connErr != nil {
-				log.Printf("failed to close connection: %v", connErr)
-			}
-			return
-		}
-
-		// Validate the solution
-		if !ValidatePoWSolution(challenge, solution) {
-			limiter.logger.Printf("Invalid PoW solution from IP %s", ip)
-			limiter.increaseDifficulty(ip)
-			connErr := conn.Close()
-			if connErr != nil {
-				log.Printf("failed to close connection: %v", connErr)
-			}
-			return
-		}
-
-		// If the solution is valid, decrease the difficulty
-		limiter.decreaseDifficulty(ip)
-		limiter.logger.Printf("Valid PoW solution from IP %s, difficulty: %d", ip, difficulty)
+		// 3. If rate limit is okay, proceed directly without PoW
+		limiter.logger.Printf("IP %s accepted (within rate limit)", ip)
+		return true
 	}
+}
+
+// Helper function to apply middleware in server handleConnection
+func ApplyMiddleware(conn net.Conn, middleware func(net.Conn) bool, handler func(net.Conn)) {
+	if middleware != nil {
+		if !middleware(conn) {
+			// Middleware rejected the connection and closed it
+			return
+		}
+		// Middleware passed, connection is still open
+	}
+	// Proceed with the actual handler
+	handler(conn)
 }
 
 func (r *RateLimiter) isBanned(ip string) bool {
 	r.mu.RLock()
 	banTime, exists := r.bannedIPs[ip]
+	r.mu.RUnlock() // Unlock before potentially acquiring write lock
+
 	if !exists {
-		r.mu.RUnlock()
 		return false
 	}
 
 	if time.Now().After(banTime) {
-		r.mu.RUnlock()
+		// Ban expired, remove it
 		r.mu.Lock()
-		delete(r.bannedIPs, ip)
+		// Double check after acquiring write lock
+		if currentBanTime, stillExists := r.bannedIPs[ip]; stillExists && time.Now().After(currentBanTime) {
+			delete(r.bannedIPs, ip)
+			r.logger.Printf("Ban expired for IP %s", ip)
+		}
 		r.mu.Unlock()
-		return false
+		return false // Not banned anymore
 	}
-	r.mu.RUnlock()
+
+	// Ban is still active
 	return true
 }
 
-// allowConnection проверяет, разрешено ли новое соединение
-func (r *RateLimiter) allowConnection(ip string) bool {
+// checkAndUpdateRate checks connection rate, updates counter, and returns (allowConnection, shouldBan)
+func (r *RateLimiter) checkAndUpdateRate(ip string) (bool, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	now := time.Now()
 	counter, exists := r.connectionsPerIP[ip]
 
-	if !exists {
+	// First connection within the second or first ever
+	if !exists || now.Sub(counter.timestamp) >= time.Second {
 		r.connectionsPerIP[ip] = &rateCounter{
 			count:     1,
 			timestamp: now,
 		}
-		return true
+		// Reset difficulty if it was previously high? Optional.
+		// delete(r.difficulties, ip)
+		return true, false // Allow, don't ban
 	}
 
-	// Если прошла секунда, сбрасываем счетчик
-	if now.Sub(counter.timestamp) >= time.Second {
-		counter.count = 1
-		counter.timestamp = now
-		return true
-	}
-
-	// Увеличиваем счетчик
+	// Connection within the same second
 	counter.count++
 
-	// Если превышен лимит, бан IP
+	// Check if limit exceeded
 	if counter.count > defaultRateLimitPerIP {
+		// Ban the IP
 		r.bannedIPs[ip] = now.Add(banDuration)
-		return false
+		// Remove the counter as the IP is now banned
+		delete(r.connectionsPerIP, ip)
+		return false, true // Don't allow, Ban
 	}
 
-	return true
+	// Rate limit is okay for now
+	return true, false // Allow, don't ban
 }
 
-// increaseDifficulty увеличивает сложность PoW для IP
+// increaseDifficulty increases PoW difficulty for an IP. MUST be called with lock held or ensure thread safety.
 func (r *RateLimiter) increaseDifficulty(ip string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	current := r.difficulties[ip]
-	if current < maxDifficulty {
-		r.difficulties[ip] = current + 1
-		r.logger.Printf("Increased PoW difficulty for IP %s to %d", ip, current+1)
+	currentDifficulty := r.getDifficultyLocked(ip) // Use locked version
+	if currentDifficulty < maxDifficulty {
+		newDifficulty := currentDifficulty + 1
+		r.difficulties[ip] = newDifficulty
+		r.logger.Printf("Increased PoW difficulty for IP %s to %d", ip, newDifficulty)
 	}
 }
 
-// decreaseDifficulty уменьшает сложность PoW для IP
+// decreaseDifficulty decreases PoW difficulty for an IP. MUST be called with lock held or ensure thread safety.
 func (r *RateLimiter) decreaseDifficulty(ip string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	current := r.difficulties[ip]
-	if current > defaultInitialDifficulty {
-		r.difficulties[ip] = current - 1
-		r.logger.Printf("Decreased PoW difficulty for IP %s to %d", ip, current-1)
+	currentDifficulty := r.getDifficultyLocked(ip) // Use locked version
+	if currentDifficulty > defaultInitialDifficulty {
+		newDifficulty := currentDifficulty - 1
+		r.difficulties[ip] = newDifficulty
+		r.logger.Printf("Decreased PoW difficulty for IP %s to %d", ip, newDifficulty)
+	} else if currentDifficulty == defaultInitialDifficulty {
+		// Optionally remove the entry if it's back to default
+		delete(r.difficulties, ip)
+		r.logger.Printf("Reset PoW difficulty for IP %s to default", ip)
 	}
 }
 
-// getDifficulty возвращает текущую сложность PoW для IP
+// getDifficulty returns the current PoW difficulty for an IP.
 func (r *RateLimiter) getDifficulty(ip string) int32 {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return r.getDifficultyLocked(ip)
+}
 
+// getDifficultyLocked returns the current PoW difficulty, assumes lock is already held.
+func (r *RateLimiter) getDifficultyLocked(ip string) int32 {
 	difficulty, exists := r.difficulties[ip]
 	if !exists {
+		// Set default difficulty if not exists, maybe?
+		// r.difficulties[ip] = defaultInitialDifficulty
 		return defaultInitialDifficulty
 	}
 	return difficulty
 }
 
-// Cleanup удаляет устаревшие записи
+// Cleanup removes expired bans and old connection counters.
 func (r *RateLimiter) Cleanup() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	now := time.Now()
+	cleanedBans := 0
+	cleanedCounters := 0
 
-	// Очищаем истекшие баны
+	// Clean up expired bans
 	for ip, banTime := range r.bannedIPs {
 		if now.After(banTime) {
 			delete(r.bannedIPs, ip)
+			cleanedBans++
 		}
 	}
 
-	// Очищаем старые счетчики
+	// Clean up old counters (older than 1-2 seconds)
+	cutoff := now.Add(-2 * time.Second) // Keep counters for 2 seconds for safety
 	for ip, counter := range r.connectionsPerIP {
-		if now.Sub(counter.timestamp) >= time.Second {
+		if counter.timestamp.Before(cutoff) {
 			delete(r.connectionsPerIP, ip)
+			cleanedCounters++
 		}
+	}
+
+	// Clean up difficulties for IPs no longer tracked (optional)
+	cleanedDifficulties := 0
+	for ip := range r.difficulties {
+		_, counterExists := r.connectionsPerIP[ip]
+		_, banExists := r.bannedIPs[ip]
+		if !counterExists && !banExists {
+			// Only remove difficulty if IP is neither in counters nor banned
+			delete(r.difficulties, ip)
+			cleanedDifficulties++
+		}
+	}
+
+	if cleanedBans > 0 || cleanedCounters > 0 || cleanedDifficulties > 0 {
+		r.logger.Printf("Cleanup finished. Removed: %d bans, %d counters, %d difficulties.", cleanedBans, cleanedCounters, cleanedDifficulties)
 	}
 }

@@ -3,6 +3,7 @@ package tcp
 import (
 	"crypto/tls"
 	"log"
+	"net"
 	"time"
 )
 
@@ -49,5 +50,25 @@ func WithServerLogger(logger *log.Logger) ServerOption {
 func WithServerTLS(config *tls.Config) ServerOption {
 	return func(s *Server) {
 		s.tlsConfig = config
+	}
+}
+
+// WithPoolLogger Option to set logger for the pool
+func WithPoolLogger(logger *log.Logger) func(*ConnectionPool) {
+	return func(p *ConnectionPool) {
+		p.logger = logger
+	}
+}
+
+// WithPoolPingTimeout Option to set ping timeout for the pool
+func WithPoolPingTimeout(timeout time.Duration) func(*ConnectionPool) {
+	return func(p *ConnectionPool) {
+		p.pingTimeout = timeout
+	}
+}
+
+func WithMiddleware(mw func(net.Conn) bool) ServerOption {
+	return func(s *Server) {
+		s.middleware = mw
 	}
 }
